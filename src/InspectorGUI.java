@@ -13,6 +13,8 @@ import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
+import java.util.prefs.Preferences;
 import javax.swing.JFileChooser;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
@@ -36,6 +38,8 @@ public final class InspectorGUI extends JFrame {
     private final JLabel elapsed = new JLabel("Elapsed: 0.0 s");
     private final JProgressBar progress = new JProgressBar(0, 4);
     private final JButton start = new JButton("Verify file");
+    private final JCheckBox restoreSession = new JCheckBox("Restore last session on startup", true);
+    private final Preferences preferences = Preferences.userNodeForPackage(InspectorGUI.class);
     private final JButton cancel = new JButton("Cancel");
     private SwingWorker<Boolean, String> worker;
     private Timer clock;
@@ -80,6 +84,12 @@ public final class InspectorGUI extends JFrame {
         cancel.addActionListener(e -> {
             if (worker != null) worker.cancel(true);
         });
+        restoreSession.setSelected(preferences.getBoolean("restoreSession", true));
+        restoreSession.addActionListener(e -> {
+            preferences.putBoolean("restoreSession", restoreSession.isSelected());
+            if (restoreSession.isSelected()) saveSession();
+            else { preferences.remove("lastFile"); preferences.remove("lastDeviceId"); }
+        });
         actions.add(start);
         actions.add(cancel);
         actions.add(elapsed);
@@ -87,19 +97,35 @@ public final class InspectorGUI extends JFrame {
         progress.setStringPainted(true);
         progress.setString("Waiting");
         bottom.add(progress, BorderLayout.CENTER);
-        bottom.add(status, BorderLayout.SOUTH);
+        JPanel statusRow = new JPanel(new BorderLayout());
+        statusRow.add(status, BorderLayout.NORTH);
+        statusRow.add(restoreSession, BorderLayout.SOUTH);
+        bottom.add(statusRow, BorderLayout.SOUTH);
         bottom.setBorder(BorderFactory.createEmptyBorder(0, 10, 10, 10));
         add(bottom, BorderLayout.SOUTH);
         pack();
         setMinimumSize(new Dimension(740, 440));
         setLocationRelativeTo(null);
         addLog("Ready. This program verifies an existing file; it cannot generate an RSA signature.");
+        if (restoreSession.isSelected()) {
+            file.setText(preferences.get("lastFile", ""));
+            deviceId.setText(preferences.get("lastDeviceId", ""));
+            if (!file.getText().isEmpty()) {
+                addLog("Previous session restored. Enter IMEI and click Verify file to resume verification.");
+            }
+        }
     }
 
     private void addLog(String message) {
         String time = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
         log.append("[" + time + "] " + message + "\n");
         log.setCaretPosition(log.getDocument().getLength());
+    }
+
+    private void saveSession() {
+        if (!restoreSession.isSelected()) return;
+        preferences.put("lastFile", file.getText().trim());
+        preferences.put("lastDeviceId", deviceId.getText().trim());
     }
 
     private void runVerification(ActionEvent event) {
@@ -119,6 +145,7 @@ public final class InspectorGUI extends JFrame {
                     "File not found", JOptionPane.ERROR_MESSAGE);
             return;
         }
+        saveSession();
         log.setText("");
         progress.setValue(0);
         progress.setString("Starting");
