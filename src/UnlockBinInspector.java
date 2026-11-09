@@ -30,6 +30,48 @@ public final class UnlockBinInspector {
 
     private UnlockBinInspector() {}
 
+    public static final class Result {
+        public final boolean valid;
+        public Result(boolean valid) { this.valid = valid; }
+    }
+
+    public static Result verify(String imei, String deviceId, byte[] file,
+                                java.util.function.Consumer<String> progress) throws Exception {
+        if (!imei.matches("[0-9]{15}") || !deviceId.matches("(?i)[0-9a-f]{64}"))
+            throw new IllegalArgumentException("Invalid IMEI or Device ID format");
+        progress.accept("Checking length: " + file.length + " bytes");
+        if (file.length != FILE_SIZE) return new Result(false);
+        ByteBuffer header = ByteBuffer.wrap(file).order(ByteOrder.LITTLE_ENDIAN);
+        boolean headerValid = Integer.toUnsignedLong(header.getInt()) == MAGIC_1
+                && Integer.toUnsignedLong(header.getInt()) == MAGIC_2
+                && Integer.toUnsignedLong(header.getInt()) == 1
+                && Integer.toUnsignedLong(header.getInt()) == 2
+                && Integer.toUnsignedLong(header.getInt()) == SIGNATURE_SIZE;
+        progress.accept("Header valid: " + headerValid);
+        if (!headerValid) return new Result(false);
+        byte[] input = new byte[128];
+        byte[] id = deviceId.toUpperCase().getBytes(StandardCharsets.US_ASCII);
+        byte[] im = imei.getBytes(StandardCharsets.US_ASCII);
+        System.arraycopy(id, 0, input, 0, id.length);
+        System.arraycopy(im, 0, input, 96, im.length);
+        PublicKey key = KeyFactory.getInstance("RSA").generatePublic(
+                new RSAPublicKeySpec(new BigInteger(RSA_MODULUS), BigInteger.valueOf(65537)));
+        progress.accept("Verifying signature 1 (RSA-2048)");
+        Signature first = Signature.getInstance("NONEwithRSA");
+        first.initVerify(key);
+        first.update(MessageDigest.getInstance("SHA-256").digest(input));
+        boolean firstValid = first.verify(Arrays.copyOfRange(file, HEADER_SIZE, HEADER_SIZE + SIGNATURE_SIZE));
+        progress.accept("Signature 1 valid: " + firstValid);
+        progress.accept("Verifying signature 2 (RSA-2048)");
+        Signature second = Signature.getInstance("SHA256withRSA");
+        second.initVerify(key);
+        second.update(input);
+        boolean secondValid = second.verify(Arrays.copyOfRange(file,
+                HEADER_SIZE + SIGNATURE_SIZE + 12, HEADER_SIZE + SIGNATURE_SIZE + 12 + SIGNATURE_SIZE));
+        progress.accept("Signature 2 valid: " + secondValid);
+        return new Result(firstValid && secondValid);
+    }
+
     public static void main(String[] args) throws Exception {
         if (args.length != 3) {
             System.err.println("Usage: java UnlockBinInspector <imei> <64-hex-device-id> <unlock.bin>");
